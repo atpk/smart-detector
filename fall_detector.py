@@ -248,7 +248,7 @@ class FallDetector:
         if score < config.SCORE_NORMAL:
             return "NORMAL"
         elif score < config.SCORE_AT_RISK:
-            return "AT RISK"
+            return "UNSTABLE"
         else:
             return "FALL"
 

@@ -28,7 +28,7 @@ WEIGHT_HIP_VELOCITY        = 0.20
 WEIGHT_KEYPOINT_CONFIDENCE = 0.10
 
 # ── Fall Thresholds ───────────────────────────────────
-SCORE_NORMAL          = 0.40
+SCORE_NORMAL          = 0.50
 SCORE_AT_RISK         = 0.70
 FALL_CONFIRM_FRAMES   = 5
 
