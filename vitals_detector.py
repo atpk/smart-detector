@@ -3,15 +3,15 @@ vitals_detector.py
 ──────────────────
 Camera-based vital signs using remote PhotoPlethysmoGraphy (rPPG).
 
-Uses the NEW MediaPipe Tasks API (mediapipe >= 0.10).
-The old mp.solutions.face_mesh was removed in recent versions.
+This version uses the OpenCV Haar Cascade classifier for face detection,
+which is lightweight and compatible with Python 3.12+.
 
 Pipeline
 ────────
-1. MediaPipe Face Landmarker (Tasks API) → 478 face landmarks
-2. Three skin ROIs  → forehead, left cheek, right cheek
-3. Per-frame RGB means → rolling buffer
-4. POS algorithm   → isolate blood-volume pulse
+1. OpenCV Haar Cascade   → face bounding box
+2. Three skin ROIs      → forehead, left cheek, right cheek
+3. Per-frame RGB means   → rolling buffer
+4. POS algorithm       → isolate blood-volume pulse
 5. Butterworth bandpass filter
 6. Welch PSD + peak detection → HR, HRV (RMSSD), RR
 7. R/G ratio-of-ratios → SpO₂ proxy
@@ -28,46 +28,15 @@ Vitals
 """
 
 import os
-import urllib.request
 import numpy as np
 from collections import deque
 
 import cv2
-import mediapipe as mp
-from mediapipe.tasks import python as mp_python
-from mediapipe.tasks.python import vision as mp_vision
 from scipy.signal import butter, filtfilt, find_peaks, welch
 
 import config
 
-
-# ── Landmark indices for the three skin ROIs ──────────────────────────────
-_FOREHEAD_LM = [10, 338, 297, 332, 284, 251, 389, 356,
-                454, 323, 361, 288, 397, 365, 379, 378,
-                400, 377, 152, 148, 176, 149, 150, 136,
-                172, 58, 132, 93, 234, 127, 162, 21,
-                54, 103, 67, 109]
-
-_LEFT_CHEEK_LM  = [117, 118, 119, 120, 121, 128, 245, 188,
-                   174, 212, 214, 192, 213, 199, 208, 209]
-
-_RIGHT_CHEEK_LM = [346, 347, 348, 349, 350, 357, 465, 412,
-                   398, 432, 434, 416, 433, 423, 428, 429]
-
-# Model file name and download URL
-_MODEL_FILENAME = "face_landmarker.task"
-_MODEL_URL = (
-    "https://storage.googleapis.com/mediapipe-models/"
-    "face_landmarker/face_landmarker/float16/1/face_landmarker.task"
-)
-
-
-def _ensure_model(path: str):
-    """Download the face landmarker model if not already present."""
-    if not os.path.exists(path):
-        print(f"[VitalsDetector] Downloading face landmarker model → {path} …")
-        urllib.request.urlretrieve(_MODEL_URL, path)
-        print("[VitalsDetector] Download complete.")
+_CASCADE_FILENAME = "haarcascade_frontalface_default.xml"
 
 
 class VitalsResult:
@@ -92,20 +61,13 @@ class VitalsDetector:
     """
 
     def __init__(self):
-        model_path = _MODEL_FILENAME
-        _ensure_model(model_path)
-
-        base_opts = mp_python.BaseOptions(model_asset_path=model_path)
-        opts = mp_vision.FaceLandmarkerOptions(
-            base_options             = base_opts,
-            output_face_blendshapes  = False,
-            output_facial_transformation_matrixes = False,
-            num_faces                = 1,
-            min_face_detection_confidence = config.FACE_DETECTION_CONFIDENCE,
-            min_face_presence_confidence  = config.FACE_DETECTION_CONFIDENCE,
-            min_tracking_confidence  = config.FACE_MESH_CONFIDENCE,
-        )
-        self._landmarker = mp_vision.FaceLandmarker.create_from_options(opts)
+        if not os.path.exists(_CASCADE_FILENAME):
+            raise FileNotFoundError(
+                f"Haar Cascade model not found: {_CASCADE_FILENAME}. "
+                "Please download it from the OpenCV repository."
+            )
+        self._face_cascade = cv2.CascadeClassifier(_CASCADE_FILENAME)
+        print("[VitalsDetector] Haar Cascade classifier loaded.")
 
         buf_len = int(config.RPPG_BUFFER_SECONDS * config.RPPG_SAMPLE_RATE)
         self._r_buf = deque(maxlen=buf_len)
@@ -124,8 +86,6 @@ class VitalsDetector:
         self._sim_hr  = float(rng.integers(68, 80))   # start near resting HR
         self._sim_hrv = float(rng.integers(38, 56))   # start mid-HRV range
         self._rng     = rng
-
-        print("[VitalsDetector] Face Landmarker ready.")
 
     # ── Public ────────────────────────────────────────────────────────────
 
@@ -156,35 +116,55 @@ class VitalsDetector:
         return self._last_result
 
     def release(self):
-        self._landmarker.close()
+        pass  # No-op, OpenCV cascade doesn't need explicit release
 
     # ── ROI extraction ────────────────────────────────────────────────────
 
     def _extract_roi_means(self, frame):
-        h, w = frame.shape[:2]
-        mp_image = mp.Image(
-            image_format=mp.ImageFormat.SRGB,
-            data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self._face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(80, 80)
         )
-        detection = self._landmarker.detect(mp_image)
 
-        if not detection.face_landmarks:
+        if len(faces) == 0:
             return None
 
-        landmarks = detection.face_landmarks[0]
+        # Assume the largest detected face is the main subject
+        x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
 
-        def lm_px(idx):
-            lm = landmarks[idx]
-            return int(lm.x * w), int(lm.y * h)
-
+        # --- Define ROIs based on face bounding box geometry ---
         pixels = []
-        for roi_indices in (_FOREHEAD_LM, _LEFT_CHEEK_LM, _RIGHT_CHEEK_LM):
-            pts = np.array([lm_px(i) for i in roi_indices], dtype=np.int32)
-            mask = np.zeros((h, w), dtype=np.uint8)
-            cv2.fillConvexPoly(mask, pts, 255)
-            roi_pixels = frame[mask == 255]
-            if len(roi_pixels) > 10:
-                pixels.append(roi_pixels)
+
+        # Forehead ROI
+        forehead_y1 = y + int(h * 0.05)
+        forehead_y2 = y + int(h * 0.20)
+        forehead_x1 = x + int(w * 0.25)
+        forehead_x2 = x + int(w * 0.75)
+        forehead_roi = frame[forehead_y1:forehead_y2, forehead_x1:forehead_x2]
+        if forehead_roi.size > 10:
+            pixels.append(forehead_roi.reshape(-1, 3))
+
+        # Left Cheek ROI
+        lcheek_y1 = y + int(h * 0.45)
+        lcheek_y2 = y + int(h * 0.70)
+        lcheek_x1 = x + int(w * 0.15)
+        lcheek_x2 = x + int(w * 0.40)
+        lcheek_roi = frame[lcheek_y1:lcheek_y2, lcheek_x1:lcheek_x2]
+        if lcheek_roi.size > 10:
+            pixels.append(lcheek_roi.reshape(-1, 3))
+
+        # Right Cheek ROI
+        rcheek_y1 = y + int(h * 0.45)
+        rcheek_y2 = y + int(h * 0.70)
+        rcheek_x1 = x + int(w * 0.60)
+        rcheek_x2 = x + int(w * 0.85)
+        rcheek_roi = frame[rcheek_y1:rcheek_y2, rcheek_x1:rcheek_x2]
+        if rcheek_roi.size > 10:
+            pixels.append(rcheek_roi.reshape(-1, 3))
+
 
         if not pixels:
             return None
@@ -192,6 +172,7 @@ class VitalsDetector:
         all_pixels = np.vstack(pixels)   # (N, 3) BGR
         mean_b, mean_g, mean_r = np.mean(all_pixels, axis=0)
         return float(mean_r), float(mean_g), float(mean_b)
+
 
     # ── Vitals computation ────────────────────────────────────────────────
 
@@ -238,7 +219,7 @@ class VitalsDetector:
         # Respiratory Rate
         rr_sig = self._bandpass(pulse, config.RR_FREQ_LOW, config.RR_FREQ_HIGH, fps)
         rr_val, rr_conf = self._dominant_frequency(rr_sig, fps,
-                                                    config.RR_FREQ_LOW, config.RR_FREQ_HIGH)
+                                                     config.RR_FREQ_LOW, config.RR_FREQ_HIGH)
         result.resp_rate = rr_val if rr_conf >= 0.2 else None
 
         # SpO₂

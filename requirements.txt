@@ -11,9 +11,6 @@ ultralytics>=8.2.0          # YOLOv8n-pose (auto-downloads model on first run)
 opencv-python>=4.9.0         # Mac / desktop with display
 # opencv-python-headless>=4.9.0  # Raspberry Pi
 
-# ── Face mesh for rPPG ROI extraction ─────────
-mediapipe>=0.10.14
-
 # ── Signal processing (filtering, FFT, peaks) ─
 scipy>=1.11.0
 

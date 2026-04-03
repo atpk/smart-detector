@@ -1,0 +1,21 @@
+# Health Monitor Prototype — Raspberry Pi dependencies
+# Requires Python 3.12+
+# Install:  pip install -r requirements-pi.txt
+
+# ── Core ML / pose estimation ─────────────────
+ultralytics>=8.2.0          # YOLOv8n-pose (auto-downloads model on first run)
+
+# ── Computer vision ────────────────────────────
+opencv-python>=4.9.0
+
+# ── Pi Camera Module (libcamera) ───────────────
+# picamera2 depends on system libcamera — install via apt, not pip:
+#   sudo apt install -y python3-picamera2 python3-libcamera
+# Then create your venv with system-site-packages access:
+#   python3 -m venv .venv --system-site-packages
+
+# ── Signal processing (filtering, FFT, peaks) ─
+scipy>=1.11.0
+
+# ── Numerical ─────────────────────────────────
+numpy>=1.24.0

@@ -38,10 +38,11 @@ class VideoSource:
     """
 
     def __init__(self):
-        self._path  = config.VIDEO_PATH
-        self._index = config.CAMERA_INDEX
-        self._loop  = config.LOOP_VIDEO
-        self._cap   = None
+        self._path    = config.VIDEO_PATH
+        self._index   = config.CAMERA_INDEX
+        self._loop    = config.LOOP_VIDEO
+        self._cap     = None
+        self._picam2  = None
         self._frame_delay = 1.0 / config.PLAYBACK_FPS
 
     # ── Public ────────────────────────────────────────────────────────────
@@ -52,6 +53,14 @@ class VideoSource:
         frame_idx = 0
         try:
             while True:
+                # ── picamera2 path (Pi Camera Module) ────────────────────
+                if self._picam2 is not None:
+                    frame = self._picam2.capture_array()
+                    yield frame_idx, frame
+                    frame_idx += 1
+                    continue
+
+                # ── OpenCV path (Mac / USB webcam / file) ─────────────────
                 t_start = time.time()
                 ok, frame = self._cap.read()
 
@@ -86,12 +95,19 @@ class VideoSource:
             self.release()
 
     def release(self):
+        if self._picam2 is not None:
+            self._picam2.stop()
+            self._picam2 = None
         if self._cap and self._cap.isOpened():
             self._cap.release()
 
     # ── Private ───────────────────────────────────────────────────────────
 
     def _open(self):
+        if config.USE_PICAMERA2 and not self._path:
+            self._open_picamera2()
+            return
+
         if self._path:
             # ── File mode ────────────────────────────────────────────────
             self._cap = cv2.VideoCapture(self._path)
@@ -135,6 +151,18 @@ class VideoSource:
                 f"[VideoSource] Opened camera index={self._index} "
                 f"on {sys_name}  ({w}×{h} @ {fps:.1f} fps)"
             )
+
+    def _open_picamera2(self):
+        """Open the Pi Camera Module via libcamera (picamera2)."""
+        from picamera2 import Picamera2
+        self._picam2 = Picamera2()
+        cam_cfg = self._picam2.create_preview_configuration(
+            main={"format": "BGR888", "size": (640, 480)},
+            controls={"FrameRate": 30},
+        )
+        self._picam2.configure(cam_cfg)
+        self._picam2.start()
+        print("[VideoSource] Opened Pi Camera Module via picamera2  (640×480 @ 30 fps)")
 
     def _open_camera(self):
         """

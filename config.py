@@ -5,9 +5,13 @@
 
 # ── Camera ────────────────────────────────────────────
 VIDEO_PATH        = ""      # "" = live camera; "/path/file.mp4" = file
-CAMERA_INDEX      = 0       # 0 = default camera
+CAMERA_INDEX      = 0       # 0 = default camera (ignored when USE_PICAMERA2=True)
 LOOP_VIDEO        = False
 PLAYBACK_FPS      = 30
+
+# Set True on Raspberry Pi with Camera Module (uses libcamera via picamera2).
+# Leave False on Mac / USB webcams (uses OpenCV VideoCapture / V4L2).
+USE_PICAMERA2     = False
 
 # Force fixed exposure & white balance for accurate rPPG
 # (Auto-exposure flicker is the #1 cause of bad vitals readings)

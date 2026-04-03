@@ -123,3 +123,7 @@ Thumbs.db
 
 # If using FaceLandmarker, model assets
 face_landmarker.task
+
+.env
+opencode.json
+haarcascade_frontalface_default.xml
