@@ -8,6 +8,9 @@ Two-column dashboard layout:
                              + annotated camera feed at the bottom
 """
 
+import os
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
+import pygame
 import cv2
 import numpy as np
 import config
@@ -52,6 +55,11 @@ class Display:
         self._flash_frames_left = 0
         self._dot_frame = 0
 
+        # Initialize Pygame window
+        pygame.init()
+        pygame.display.set_caption(config.WINDOW_NAME)
+        self.screen = pygame.display.set_mode((_CANVAS_W, _CANVAS_H))
+
     # ── Public ────────────────────────────────────────────────────────────
 
     def render(self, frame, fall_result, vitals_result, alert_fired: bool,
@@ -81,15 +89,31 @@ class Display:
         return canvas
 
     def show(self, canvas: np.ndarray):
-        cv2.imshow(config.WINDOW_NAME, canvas)
+        # Convert OpenCV BGR to RGB
+        rgb_canvas = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+        # Pygame expects (Width, Height, Channels), so swap axes
+        surface = pygame.surfarray.make_surface(np.swapaxes(rgb_canvas, 0, 1))
+        self.screen.blit(surface, (0, 0))
+        pygame.display.update()
 
-    @staticmethod
-    def wait_key(ms: int = 1) -> int:
-        return cv2.waitKey(ms) & 0xFF
+    def wait_key(self, ms: int = 1) -> int:
+        if ms > 0:
+            pygame.time.wait(ms)
+            
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return 27  # ESC
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return 27
+                if event.unicode:
+                    return ord(event.unicode)
+                return event.key
+        return -1
 
     @staticmethod
     def destroy():
-        cv2.destroyAllWindows()
+        pygame.quit()
 
     # ── Left panel ────────────────────────────────────────────────────────
 
